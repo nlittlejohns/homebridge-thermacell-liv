@@ -1,0 +1,22 @@
+{
+  "bridge": {
+    "name": "ThermacellLIV",
+    "username": "CC:22:3D:E3:CE:31",
+    "port": 51826,
+    "pin": "031-45-155"
+  },
+  "description": "Homebridge Thermacell LIV development config",
+  "plugins": [
+    "homebridge-thermacell-liv"
+  ],
+  "platforms": [
+    {
+      "name": "Thermacell LIV",
+      "platform": "ThermacellLIV",
+      "email": "your-email@example.com",
+      "password": "your-password",
+      "pollInterval": 60
+    }
+  ],
+  "accessories": []
+}

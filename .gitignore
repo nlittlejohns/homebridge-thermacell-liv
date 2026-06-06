@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+test/hbConfig/persist/
+test/hbConfig/accessories/

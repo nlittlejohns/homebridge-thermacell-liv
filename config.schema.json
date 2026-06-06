@@ -1,0 +1,44 @@
+{
+  "pluginAlias": "ThermacellLIV",
+  "pluginType": "platform",
+  "singular": true,
+  "strictValidation": false,
+  "schema": {
+    "type": "object",
+    "required": ["name", "email", "password"],
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "Thermacell LIV",
+        "required": true
+      },
+      "email": {
+        "title": "Thermacell Account Email",
+        "type": "string",
+        "format": "email",
+        "required": true
+      },
+      "password": {
+        "title": "Thermacell Account Password",
+        "type": "string",
+        "required": true
+      },
+      "pollInterval": {
+        "title": "Poll Interval (seconds)",
+        "type": "integer",
+        "default": 60,
+        "minimum": 30,
+        "maximum": 300
+      },
+      "refillCartridgeType": {
+        "title": "Refill Cartridge Type",
+        "type": "integer",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 2,
+        "description": "0 = 40hr (yellow), 1 = 100hr (blue), 2 = 180hr (gray)"
+      }
+    }
+  }
+}
