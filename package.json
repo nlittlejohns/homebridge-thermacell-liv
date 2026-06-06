@@ -4,15 +4,31 @@
   "type": "module",
   "version": "1.0.0",
   "description": "Homebridge plugin for Thermacell LIV v2 mosquito repeller hubs via ESP RainMaker cloud API.",
+  "author": "Neil Littlejohns",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/nlittlejohns/homebridge-thermacell-liv#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nlittlejohns/homebridge-thermacell-liv.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nlittlejohns/homebridge-thermacell-liv/issues"
+  },
   "keywords": [
     "homebridge-plugin",
     "thermacell",
-    "liv"
+    "liv",
+    "mosquito",
+    "homekit"
+  ],
+  "files": [
+    "dist",
+    "config.schema.json"
   ],
   "main": "dist/index.js",
   "engines": {
     "node": ">=18.0.0",
-    "homebridge": ">=1.6.0"
+    "homebridge": "^1.6.0 || ^2.0.0"
   },
   "scripts": {
     "build": "rimraf ./dist && tsc",

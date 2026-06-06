@@ -65,7 +65,7 @@ Add a platform block to `config.json`:
 ## Development
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/nlittlejohns/homebridge-thermacell-liv.git
 cd homebridge-thermacell-liv
 npm install
 npm run build
