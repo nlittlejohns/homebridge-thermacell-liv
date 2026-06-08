@@ -126,12 +126,6 @@ export class ThermacellHubAccessory {
 
     this.refillService.updateCharacteristic(Characteristic.CurrentRelativeHumidity, this.getRefillLife());
     this.statusService.updateCharacteristic(Characteristic.OccupancyDetected, this.getOccupancy());
-
-    this.setReachability(device.online);
-  }
-
-  setReachability(reachable: boolean): void {
-    this.accessory.updateReachability(reachable);
   }
 
   private getHub(): HubParams {

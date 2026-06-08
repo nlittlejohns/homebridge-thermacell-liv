@@ -74,7 +74,6 @@ export class ThermacellLIVPlatform implements DynamicPlatformPlugin {
       this.startPolling();
     } catch (error) {
       this.log.error('Failed to start Thermacell LIV platform: %s', this.formatError(error));
-      this.setAllReachability(false);
     }
   }
 
@@ -155,15 +154,8 @@ export class ThermacellLIVPlatform implements DynamicPlatformPlugin {
       } else {
         this.log.warn('Thermacell discovery failed: %s', this.formatError(error));
       }
-      this.setAllReachability(false);
     } finally {
       this.isDiscovering = false;
-    }
-  }
-
-  private setAllReachability(reachable: boolean): void {
-    for (const handler of this.handlers.values()) {
-      handler.setReachability(reachable);
     }
   }
 
