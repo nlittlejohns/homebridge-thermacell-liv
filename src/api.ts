@@ -42,7 +42,7 @@ export class ThermacellAPI {
 
     if (nodeIds.length === 0) {
       this.log.warn(
-        'No LIV v2 hubs found. Verify your account uses ESP RainMaker hardware (LIV v2). LIV v1/v1.5 is not supported.',
+        'No LIV hubs found. Verify your account uses ESP RainMaker hardware (LIV v1.5 or v2). LIV v1 is not supported.',
       );
       return [];
     }

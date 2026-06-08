@@ -1,8 +1,8 @@
 # homebridge-thermacell-liv
 
-Homebridge plugin for **Thermacell LIV v2** mosquito repeller hubs via the ESP RainMaker cloud API (`api.iot.thermacell.com`).
+Homebridge plugin for **Thermacell LIV v1.5 and v2** mosquito repeller hubs via the ESP RainMaker cloud API (`api.iot.thermacell.com`).
 
-LIV v1 and v1.5 hardware (legacy Ayla Networks backend) is **not supported**.
+LIV v1 hardware (legacy Ayla Networks backend) is **not supported**.
 
 ## Features
 
@@ -20,7 +20,7 @@ Each hub on your Thermacell account is exposed as a HomeKit accessory with:
 
 - Homebridge ≥ 1.6.0
 - Node.js ≥ 18 LTS
-- Thermacell LIV v2 hub(s) linked to your Thermacell app account
+- Thermacell LIV v1.5 or v2 hub(s) linked to your Thermacell app account
 - Internet connectivity (cloud-only; no local API)
 
 ## Installation
