@@ -71,10 +71,12 @@ export class ThermacellLIVPlatform implements DynamicPlatformPlugin {
     try {
       await this.apiClient.login();
       await this.discoverDevices();
-      this.startPolling();
     } catch (error) {
       this.log.error('Failed to start Thermacell LIV platform: %s', this.formatError(error));
+      this.log.warn('Will keep retrying on the normal poll interval.');
     }
+
+    this.startPolling();
   }
 
   private startPolling(): void {

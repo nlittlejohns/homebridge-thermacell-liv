@@ -218,10 +218,27 @@ export class ThermacellAPI {
       if (error instanceof Error && error.name === 'AbortError') {
         throw new ThermacellApiError('Thermacell API request timed out');
       }
-      throw new ThermacellApiError(`Thermacell API connection error: ${String(error)}`);
+      throw new ThermacellApiError(`Thermacell API connection error: ${this.formatConnectionError(error)}`);
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private formatConnectionError(error: unknown): string {
+    if (!(error instanceof Error)) {
+      return String(error);
+    }
+
+    const parts = [error.message];
+    const cause = (error as Error & { cause?: unknown }).cause;
+    if (cause instanceof Error) {
+      const code = (cause as NodeJS.ErrnoException).code;
+      parts.push(code ? `${cause.message} (${code})` : cause.message);
+    } else if (cause) {
+      parts.push(String(cause));
+    }
+
+    return parts.join(': ');
   }
 
   private isAuthenticated(): boolean {
