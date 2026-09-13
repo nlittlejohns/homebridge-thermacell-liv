@@ -68,7 +68,7 @@ export class ThermacellAPI {
         config ? Promise.resolve(undefined) : this.request<Record<string, unknown>>('GET', '/user/nodes/config', { nodeid: nodeId }),
       ]);
 
-      if (fetchedConfig) {
+      if (fetchedConfig && Object.keys(fetchedConfig).length > 0) {
         this.nodeConfigCache.set(nodeId, fetchedConfig);
         config = fetchedConfig;
       }

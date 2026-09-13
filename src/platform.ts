@@ -48,6 +48,16 @@ export class ThermacellLIVPlatform implements DynamicPlatformPlugin {
     this.api.on('didFinishLaunching', () => {
       void this.startPlatform();
     });
+
+    this.api.on('shutdown', () => {
+      if (this.pollTimer) {
+        clearInterval(this.pollTimer);
+        this.pollTimer = undefined;
+      }
+      for (const handler of this.handlers.values()) {
+        handler.destroy();
+      }
+    });
   }
 
   get Service() {
@@ -152,6 +162,8 @@ export class ThermacellLIVPlatform implements DynamicPlatformPlugin {
             continue;
           }
           this.log.info('Removing stale accessory:', accessory.displayName);
+          const handler = this.handlers.get(uuid);
+          handler?.destroy();
           this.handlers.delete(uuid);
           this.accessories.delete(uuid);
           this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
@@ -178,6 +190,14 @@ export class ThermacellLIVPlatform implements DynamicPlatformPlugin {
       return value;
     }
     return 1;
+  }
+
+  getAutoShutoffHours(): number {
+    const value = this.platformConfig.autoShutoffHours ?? 0;
+    if (typeof value === 'number' && value > 0) {
+      return Math.min(24, Math.max(1, Math.round(value)));
+    }
+    return 0;
   }
 
   private formatError(error: unknown): string {

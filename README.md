@@ -42,7 +42,8 @@ Add a platform block to `config.json`:
       "email": "your-thermacell-account-email",
       "password": "your-thermacell-password",
       "pollInterval": 60,
-      "refillCartridgeType": 1
+      "refillCartridgeType": 1,
+      "autoShutoffHours": 2
     }
   ]
 }
@@ -54,6 +55,7 @@ Add a platform block to `config.json`:
 | `password` | Thermacell app login password (required) |
 | `pollInterval` | State refresh interval in seconds (30–300, default 60) |
 | `refillCartridgeType` | Cartridge type for refill reset: 0 = 40hr, 1 = 100hr (default), 2 = 180hr |
+| `autoShutoffHours` | Auto-shutoff timer in hours (0 = disabled [default], 1–24) |
 
 ## Limitations
 

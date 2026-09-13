@@ -42,6 +42,7 @@ export interface ThermacellConfig {
   password: string;
   pollInterval?: number;
   refillCartridgeType?: number;
+  autoShutoffHours?: number;
 }
 
 export interface AccessoryContext {

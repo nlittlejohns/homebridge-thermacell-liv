@@ -27,6 +27,8 @@ export class ThermacellHubAccessory {
   private isFlushingLed = false;
   private previousDeviceBeforeLedUpdate?: DeviceState;
 
+  private autoShutoffTimer?: NodeJS.Timeout;
+
   constructor(
     private readonly platform: ThermacellLIVPlatform,
     private readonly accessory: PlatformAccessory<AccessoryContext>,
@@ -123,6 +125,15 @@ export class ThermacellHubAccessory {
     this.accessory.context.device = device;
     this.accessory.displayName = device.name;
 
+    const isPowerOn = this.getPower();
+    if (isPowerOn) {
+      if (this.platform.getAutoShutoffHours() > 0 && !this.autoShutoffTimer) {
+        this.startAutoShutoffTimer();
+      }
+    } else {
+      this.clearAutoShutoffTimer();
+    }
+
     const { Characteristic } = this.platform;
 
     this.accessory.getService(this.platform.Service.AccessoryInformation)!
@@ -204,6 +215,11 @@ export class ThermacellHubAccessory {
 
     const previous = this.cloneDevice();
     this.applyLocalPower(value);
+    if (value) {
+      this.startAutoShutoffTimer();
+    } else {
+      this.clearAutoShutoffTimer();
+    }
     this.pushLocalState();
 
     try {
@@ -211,6 +227,11 @@ export class ThermacellHubAccessory {
     } catch (error) {
       this.platform.log.warn('Failed to set power for %s: %s', this.device.name, String(error));
       this.device = previous;
+      if (previous.hub['Enable Repellers']) {
+        this.startAutoShutoffTimer();
+      } else {
+        this.clearAutoShutoffTimer();
+      }
       this.pushLocalState();
       throw new HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
@@ -342,5 +363,71 @@ export class ThermacellHubAccessory {
 
   private cloneDevice(): DeviceState {
     return structuredClone(this.device);
+  }
+
+  private startAutoShutoffTimer(): void {
+    const hours = this.platform.getAutoShutoffHours();
+    if (hours <= 0) {
+      return;
+    }
+
+    if (this.autoShutoffTimer) {
+      clearTimeout(this.autoShutoffTimer);
+    }
+
+    const durationMs = hours * 60 * 60 * 1000;
+    this.platform.log.info(
+      'Auto-shutoff timer started for %s: %d hour%s',
+      this.device.name,
+      hours,
+      hours === 1 ? '' : 's',
+    );
+
+    this.autoShutoffTimer = setTimeout(() => {
+      void this.handleAutoShutoff();
+    }, durationMs);
+  }
+
+  private clearAutoShutoffTimer(): void {
+    if (this.autoShutoffTimer) {
+      clearTimeout(this.autoShutoffTimer);
+      this.autoShutoffTimer = undefined;
+      this.platform.log.debug('Auto-shutoff timer cleared for %s', this.device.name);
+    }
+  }
+
+  private async handleAutoShutoff(): Promise<void> {
+    this.autoShutoffTimer = undefined;
+    this.platform.log.info(
+      'Auto-shutoff timer expired for %s. Turning off repellers...',
+      this.device.name,
+    );
+
+    const previous = this.cloneDevice();
+    this.applyLocalPower(false);
+    this.pushLocalState();
+
+    try {
+      await this.platform.getApiClient().setPower(this.device.nodeId, false);
+      this.platform.log.info('Auto-shutoff completed successfully for %s', this.device.name);
+    } catch (error) {
+      this.platform.log.warn('Auto-shutoff failed for %s: %s', this.device.name, String(error));
+      this.device = previous;
+      this.pushLocalState();
+    }
+  }
+
+  destroy(): void {
+    this.clearAutoShutoffTimer();
+    if (this.ledDebounceTimer) {
+      clearTimeout(this.ledDebounceTimer);
+      this.ledDebounceTimer = undefined;
+    }
+    if (this.pendingLedReject) {
+      this.pendingLedReject(new Error('Accessory destroyed'));
+      this.pendingLedPromise = undefined;
+      this.pendingLedResolve = undefined;
+      this.pendingLedReject = undefined;
+    }
   }
 }
