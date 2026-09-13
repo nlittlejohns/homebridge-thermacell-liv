@@ -20,6 +20,13 @@ export class ThermacellHubAccessory {
   private readonly statusService;
   private readonly resetService;
 
+  private pendingLedPromise?: Promise<void>;
+  private pendingLedResolve?: () => void;
+  private pendingLedReject?: (error: unknown) => void;
+  private ledDebounceTimer?: NodeJS.Timeout;
+  private isFlushingLed = false;
+  private previousDeviceBeforeLedUpdate?: DeviceState;
+
   constructor(
     private readonly platform: ThermacellLIVPlatform,
     private readonly accessory: PlatformAccessory<AccessoryContext>,
@@ -64,32 +71,32 @@ export class ThermacellHubAccessory {
 
     this.switchService.getCharacteristic(Characteristic.On)!
       .onGet(() => this.getPower())
-      .onSet((value) => {
-        void this.setPower(Boolean(value));
+      .onSet(async (value) => {
+        await this.setPower(Boolean(value));
       });
 
     this.lightService.getCharacteristic(Characteristic.On)!
       .onGet(() => this.getLightOn())
-      .onSet((value) => {
-        void this.setLightOn(Boolean(value));
+      .onSet(async (value) => {
+        await this.setLightOn(Boolean(value));
       });
 
     this.lightService.getCharacteristic(Characteristic.Brightness)!
       .onGet(() => this.getBrightness())
-      .onSet((value) => {
-        void this.setBrightness(Number(value));
+      .onSet(async (value) => {
+        await this.setBrightness(Number(value));
       });
 
     this.lightService.getCharacteristic(Characteristic.Hue)!
       .onGet(() => this.getHue())
-      .onSet((value) => {
-        void this.setHue(Number(value));
+      .onSet(async (value) => {
+        await this.setHue(Number(value));
       });
 
     this.lightService.getCharacteristic(Characteristic.Saturation)!
       .onGet(() => this.getSaturation())
-      .onSet((value) => {
-        void this.setSaturation(Number(value));
+      .onSet(async (value) => {
+        await this.setSaturation(Number(value));
       });
 
     this.refillService.getCharacteristic(Characteristic.CurrentRelativeHumidity)!
@@ -99,14 +106,19 @@ export class ThermacellHubAccessory {
       .onGet(() => this.getOccupancy());
 
     this.resetService.getCharacteristic(Characteristic.ProgrammableSwitchEvent)!
-      .onSet((value) => {
+      .onSet(async (value) => {
         if (Number(value) === Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS) {
-          void this.resetRefill();
+          await this.resetRefill();
         }
       });
   }
 
   updateFromDevice(device: DeviceState): void {
+    if (this.ledDebounceTimer || this.isFlushingLed) {
+      device.hub['LED Hue'] = this.device.hub['LED Hue'];
+      device.hub['LED Brightness'] = this.device.hub['LED Brightness'];
+    }
+
     this.device = device;
     this.accessory.context.device = device;
     this.accessory.displayName = device.name;
@@ -184,9 +196,10 @@ export class ThermacellHubAccessory {
   }
 
   private async setPower(value: boolean): Promise<void> {
+    const { HapStatusError, HAPStatus } = this.platform.api.hap;
     if (!this.device.online) {
       this.platform.log.warn('Cannot set power while %s is offline', this.device.name);
-      return;
+      throw new HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
 
     const previous = this.cloneDevice();
@@ -199,85 +212,101 @@ export class ThermacellHubAccessory {
       this.platform.log.warn('Failed to set power for %s: %s', this.device.name, String(error));
       this.device = previous;
       this.pushLocalState();
+      throw new HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
 
   private async setLightOn(value: boolean): Promise<void> {
-    if (!this.device.online) {
-      this.platform.log.warn('Cannot set LED while %s is offline', this.device.name);
-      return;
-    }
-
-    const previous = this.cloneDevice();
     const brightness = value ? (this.getBrightness() > 0 ? this.getBrightness() : 100) : 0;
-    this.applyLocalBrightness(brightness);
-    this.pushLocalState();
-
-    try {
-      await this.platform.getApiClient().setLedBrightness(this.device.nodeId, brightness);
-    } catch (error) {
-      this.platform.log.warn('Failed to set LED power for %s: %s', this.device.name, String(error));
-      this.device = previous;
-      this.pushLocalState();
-    }
+    return this.queueLedChange(this.getHue(), this.getSaturation(), brightness);
   }
 
   private async setBrightness(value: number): Promise<void> {
-    if (!this.device.online) {
-      this.platform.log.warn('Cannot set LED brightness while %s is offline', this.device.name);
-      return;
-    }
-
-    const previous = this.cloneDevice();
     const brightness = clampPercent(value);
-    this.applyLocalBrightness(brightness);
-    this.pushLocalState();
-
-    try {
-      await this.platform.getApiClient().setLedBrightness(this.device.nodeId, brightness);
-    } catch (error) {
-      this.platform.log.warn('Failed to set LED brightness for %s: %s', this.device.name, String(error));
-      this.device = previous;
-      this.pushLocalState();
-    }
+    return this.queueLedChange(this.getHue(), this.getSaturation(), brightness);
   }
 
   private async setHue(value: number): Promise<void> {
-    await this.setLedColorFromHomeKit(value, this.getSaturation(), this.getBrightness());
+    return this.queueLedChange(value, this.getSaturation(), this.getBrightness());
   }
 
   private async setSaturation(value: number): Promise<void> {
-    await this.setLedColorFromHomeKit(this.getHue(), value, this.getBrightness());
+    return this.queueLedChange(this.getHue(), value, this.getBrightness());
   }
 
-  private async setLedColorFromHomeKit(hue: number, saturation: number, brightness: number): Promise<void> {
+  private queueLedChange(hue: number, saturation: number, brightness: number): Promise<void> {
+    const { HapStatusError, HAPStatus } = this.platform.api.hap;
     if (!this.device.online) {
-      this.platform.log.warn('Cannot set LED color while %s is offline', this.device.name);
-      return;
+      this.platform.log.warn('Cannot set LED while %s is offline', this.device.name);
+      throw new HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
 
-    const previous = this.cloneDevice();
+    if (!this.ledDebounceTimer && !this.isFlushingLed) {
+      this.previousDeviceBeforeLedUpdate = this.cloneDevice();
+    }
+
     const apiValues = homeKitHueSaturationBrightnessToApi(hue, saturation, brightness);
     this.applyLocalLedColor(apiValues.hue, apiValues.brightness);
     this.pushLocalState();
 
+    if (!this.pendingLedPromise) {
+      this.pendingLedPromise = new Promise<void>((resolve, reject) => {
+        this.pendingLedResolve = resolve;
+        this.pendingLedReject = reject;
+      });
+    }
+
+    if (this.ledDebounceTimer) {
+      clearTimeout(this.ledDebounceTimer);
+    }
+
+    this.ledDebounceTimer = setTimeout(() => {
+      void this.flushLedUpdate();
+    }, 100);
+
+    return this.pendingLedPromise;
+  }
+
+  private async flushLedUpdate(): Promise<void> {
+    const resolve = this.pendingLedResolve;
+    const reject = this.pendingLedReject;
+    const previous = this.previousDeviceBeforeLedUpdate;
+
+    this.pendingLedPromise = undefined;
+    this.pendingLedResolve = undefined;
+    this.pendingLedReject = undefined;
+    this.ledDebounceTimer = undefined;
+    this.previousDeviceBeforeLedUpdate = undefined;
+    this.isFlushingLed = true;
+
+    const { HapStatusError, HAPStatus } = this.platform.api.hap;
+    const hue = this.device.hub['LED Hue'] ?? 0;
+    const brightness = this.device.hub['LED Brightness'] ?? 0;
+
     try {
       await this.platform.getApiClient().setLedColor(
         this.device.nodeId,
-        apiValues.hue,
-        apiValues.brightness,
+        hue,
+        brightness,
       );
+      resolve?.();
     } catch (error) {
-      this.platform.log.warn('Failed to set LED color for %s: %s', this.device.name, String(error));
-      this.device = previous;
-      this.pushLocalState();
+      this.platform.log.warn('Failed to set LED for %s: %s', this.device.name, String(error));
+      if (previous) {
+        this.device = previous;
+        this.pushLocalState();
+      }
+      reject?.(new HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+    } finally {
+      this.isFlushingLed = false;
     }
   }
 
   private async resetRefill(): Promise<void> {
+    const { HapStatusError, HAPStatus } = this.platform.api.hap;
     if (!this.device.online) {
       this.platform.log.warn('Cannot reset refill while %s is offline', this.device.name);
-      return;
+      throw new HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
 
     const previousRefill = this.getRefillLife();
@@ -294,15 +323,12 @@ export class ThermacellHubAccessory {
       this.platform.log.warn('Failed to reset refill for %s: %s', this.device.name, String(error));
       this.device.hub['Refill Life'] = previousRefill;
       this.pushLocalState();
+      throw new HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
 
   private applyLocalPower(powerOn: boolean): void {
     this.device.hub['Enable Repellers'] = powerOn;
-  }
-
-  private applyLocalBrightness(brightness: number): void {
-    this.device.hub['LED Brightness'] = brightness;
   }
 
   private applyLocalLedColor(hue: number, brightness: number): void {

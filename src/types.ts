@@ -1,6 +1,7 @@
 export const DEVICE_TYPE_LIV_HUB = 'LIV Hub';
 
-export const AUTH_LIFETIME_MS = 4 * 60 * 60 * 1000;
+export const AUTH_LIFETIME_MS = 50 * 60 * 1000;
+export const AUTH_BUFFER_MS = 5 * 60 * 1000;
 
 export const MIN_REQUEST_INTERVAL_MS = 500;
 

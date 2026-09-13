@@ -1,6 +1,7 @@
 import type { Logger } from 'homebridge';
 
 import {
+  AUTH_BUFFER_MS,
   AUTH_LIFETIME_MS,
   DEFAULT_REFILL_TYPE,
   DEVICE_TYPE_LIV_HUB,
@@ -23,8 +24,11 @@ export class ThermacellAPI {
   private accessToken?: string;
   private userId?: string;
   private lastAuthenticatedAt = 0;
+  private tokenExpiresAt = 0;
   private authPromise?: Promise<void>;
   private lastRequestAt = 0;
+  private requestQueue: Promise<unknown> = Promise.resolve();
+  private readonly nodeConfigCache = new Map<string, Record<string, unknown>>();
 
   constructor(
     private readonly email: string,
@@ -47,14 +51,29 @@ export class ThermacellAPI {
       return [];
     }
 
+    // Clean up cache for removed nodes
+    for (const cachedNodeId of this.nodeConfigCache.keys()) {
+      if (!nodeIds.includes(cachedNodeId)) {
+        this.nodeConfigCache.delete(cachedNodeId);
+      }
+    }
+
     const devices: DeviceState[] = [];
     for (const nodeId of nodeIds) {
-      const [params, status, config] = await Promise.all([
+      let config = this.nodeConfigCache.get(nodeId);
+
+      const [params, status, fetchedConfig] = await Promise.all([
         this.request<Record<string, unknown>>('GET', '/user/nodes/params', { nodeid: nodeId }),
         this.request<Record<string, unknown>>('GET', '/user/nodes/status', { nodeid: nodeId }),
-        this.request<Record<string, unknown>>('GET', '/user/nodes/config', { nodeid: nodeId }),
+        config ? Promise.resolve(undefined) : this.request<Record<string, unknown>>('GET', '/user/nodes/config', { nodeid: nodeId }),
       ]);
-      devices.push(parseDeviceState(nodeId, params, status, config));
+
+      if (fetchedConfig) {
+        this.nodeConfigCache.set(nodeId, fetchedConfig);
+        config = fetchedConfig;
+      }
+
+      devices.push(parseDeviceState(nodeId, params, status, config ?? {}));
     }
 
     return devices;
@@ -104,9 +123,13 @@ export class ThermacellAPI {
 
     if (this.authPromise) {
       await this.authPromise;
-      if (!force && this.isAuthenticated() && !this.needsReauthentication()) {
+      if (this.isAuthenticated() && !this.needsReauthentication()) {
         return;
       }
+    }
+
+    if (this.isAuthenticated() && !this.needsReauthentication() && Date.now() - this.lastAuthenticatedAt < 10_000) {
+      return;
     }
 
     this.authPromise = this.performLogin();
@@ -118,16 +141,18 @@ export class ThermacellAPI {
   }
 
   private async performLogin(): Promise<void> {
-    const response = await this.fetchWithTimeout(`${BASE_URL}/login2`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        user_name: this.email,
-        password: this.password,
+    const response = await this.scheduleRequest(() =>
+      this.fetchWithTimeout(`${BASE_URL}/login2`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          user_name: this.email,
+          password: this.password,
+        }),
       }),
-    });
+    );
 
     if (response.status === 401) {
       throw new ThermacellApiError('Authentication failed: invalid credentials', response.status);
@@ -146,6 +171,9 @@ export class ThermacellAPI {
     this.accessToken = accessToken;
     this.userId = this.extractUserId(data.idtoken);
     this.lastAuthenticatedAt = Date.now();
+    this.tokenExpiresAt = this.parseJwtExpiry(accessToken)
+      ?? this.parseJwtExpiry(data.idtoken)
+      ?? (this.lastAuthenticatedAt + AUTH_LIFETIME_MS);
     this.log.info('Thermacell authentication successful%s', this.userId ? ` for user ${this.userId}` : '');
   }
 
@@ -156,7 +184,6 @@ export class ThermacellAPI {
     body?: Record<string, unknown>,
     retryAuth = true,
   ): Promise<T> {
-    await this.enforceRateLimit();
     await this.authenticate(false);
 
     const url = new URL(`${BASE_URL}${endpoint}`);
@@ -166,14 +193,16 @@ export class ThermacellAPI {
       }
     }
 
-    const response = await this.fetchWithTimeout(url.toString(), {
-      method,
-      headers: {
-        'Authorization': this.accessToken ?? '',
-        'Content-Type': 'application/json',
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    const response = await this.scheduleRequest(() =>
+      this.fetchWithTimeout(url.toString(), {
+        method,
+        headers: {
+          'Authorization': this.accessToken ?? '',
+          'Content-Type': 'application/json',
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      }),
+    );
 
     if (retryAuth && (response.status === 401 || response.status === 403)) {
       this.log.warn('Thermacell API returned %s, re-authenticating', response.status);
@@ -197,12 +226,18 @@ export class ThermacellAPI {
     return (await response.json()) as T;
   }
 
-  private async enforceRateLimit(): Promise<void> {
-    const elapsed = Date.now() - this.lastRequestAt;
-    if (elapsed < MIN_REQUEST_INTERVAL_MS) {
-      await new Promise((resolve) => setTimeout(resolve, MIN_REQUEST_INTERVAL_MS - elapsed));
-    }
-    this.lastRequestAt = Date.now();
+  private scheduleRequest<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.requestQueue.then(async () => {
+      const elapsed = Date.now() - this.lastRequestAt;
+      if (elapsed < MIN_REQUEST_INTERVAL_MS) {
+        await new Promise((resolve) => setTimeout(resolve, MIN_REQUEST_INTERVAL_MS - elapsed));
+      }
+      this.lastRequestAt = Date.now();
+      return await fn();
+    });
+
+    this.requestQueue = next.then(() => {}, () => {});
+    return next;
   }
 
   private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
@@ -246,18 +281,18 @@ export class ThermacellAPI {
   }
 
   private needsReauthentication(): boolean {
-    if (!this.lastAuthenticatedAt) {
+    if (!this.lastAuthenticatedAt || !this.accessToken) {
       return true;
     }
-    return Date.now() - this.lastAuthenticatedAt >= AUTH_LIFETIME_MS;
+    return Date.now() >= this.tokenExpiresAt - AUTH_BUFFER_MS;
   }
 
-  private extractUserId(idToken?: string): string | undefined {
-    if (!idToken) {
+  private parseJwtPayload(token?: string): Record<string, unknown> | undefined {
+    if (!token) {
       return undefined;
     }
 
-    const parts = idToken.split('.');
+    const parts = token.split('.');
     if (parts.length !== 3) {
       return undefined;
     }
@@ -266,10 +301,25 @@ export class ThermacellAPI {
       const payload = parts[1];
       const padding = payload.length % 4 === 0 ? '' : '='.repeat(4 - (payload.length % 4));
       const decoded = Buffer.from(payload + padding, 'base64url').toString('utf8');
-      const parsed = JSON.parse(decoded) as Record<string, string>;
-      return parsed['custom:user_id'];
+      return JSON.parse(decoded) as Record<string, unknown>;
     } catch {
       return undefined;
     }
+  }
+
+  private parseJwtExpiry(token?: string): number | undefined {
+    const payload = this.parseJwtPayload(token);
+    if (payload && typeof payload.exp === 'number') {
+      return payload.exp * 1000;
+    }
+    return undefined;
+  }
+
+  private extractUserId(idToken?: string): string | undefined {
+    const payload = this.parseJwtPayload(idToken);
+    if (payload && typeof payload['custom:user_id'] === 'string') {
+      return payload['custom:user_id'];
+    }
+    return undefined;
   }
 }

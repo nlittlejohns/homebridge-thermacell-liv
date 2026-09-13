@@ -144,6 +144,13 @@ export class ThermacellLIVPlatform implements DynamicPlatformPlugin {
 
       for (const [uuid, accessory] of this.accessories.entries()) {
         if (!this.discoveredCacheUUIDs.includes(uuid)) {
+          if (devices.length === 0) {
+            this.log.warn(
+              'Discovery returned 0 devices, but cached accessories exist. Skipping removal of %s to protect HomeKit configurations.',
+              accessory.displayName,
+            );
+            continue;
+          }
           this.log.info('Removing stale accessory:', accessory.displayName);
           this.handlers.delete(uuid);
           this.accessories.delete(uuid);
